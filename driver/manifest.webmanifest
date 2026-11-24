@@ -1,0 +1,9 @@
+{
+  "name": "INVTrack Driver",
+  "short_name": "Driver",
+  "start_url": "app.php",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f1f5f9",
+  "theme_color": "#0f172a"
+}
