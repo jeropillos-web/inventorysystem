@@ -2,7 +2,7 @@
 
 This file lists the AI prompts used to build and document INVTrack, what each one produced, and what happened to the result.
 
-**AI tools used:** Claude (Anthropic). _(Add any other tools you used.)_
+**AI tool used in the prompts below:** Claude (Anthropic).
 
 Prompts are copied word for word from the chats, typos included. "Excerpt" means only the part of a long message that asked for the work is shown. Every AI output was reviewed and run on XAMPP (PHP 8.0.30) before it was kept. Design decisions, such as the user roles, the separate Delivery App and the changes requested by the defense panel, were made by the developer and the group.
 
@@ -12,7 +12,7 @@ Prompts are copied word for word from the chats, typos included. "Excerpt" means
 
 | # | Date | Prompt | What it produced | Status in the current system |
 |---|---|---|---|---|
-| 1 | | _(paste the prompts used for the first version: inventory, categories, warehouse, procurement, shop orders, reports and the database)_ | First version of the modules and `sql/invtrack.sql` | Kept and extended |
+| 1 | Before Nov 2026 | Not included in this log. The first version of the modules was built before the chats listed below. | First version of Inventory, Categories, Warehouse, Procurement, Shop Orders, Reports and `sql/invtrack.sql` | Kept and extended by the prompts below |
 | 2 | Nov 2026 | "check this and remove gmaps apo and build a gps tracker from scratch" | Removed the Google Maps tracker and built a live GPS tracker (`driver.php`, `api/gps.php`, `modules/gps.php`) with Leaflet and OpenStreetMap | Removed after the defense; replaced by the Tracking Log (prompt 7) |
 | 3 | Nov 2026 | "create a separete web app for drivers to accept deliveries" | The Delivery App in `driver/`: available deliveries, accept with a vehicle, mark as delivered with the receiver's name, cancel with a reason, history | Kept; drivers now post tracking updates instead of sharing GPS |
 | 4 | Nov 2026 | "check this out. /code-review:code-review" | Code review that found three security problems: anyone could register as Administrator, the APIs did not check permissions on the server, and one form had no CSRF protection | The first two are fixed: only the first account can be an Administrator, and every API checks the user's permission |
@@ -41,8 +41,3 @@ Prompts are copied word for word from the chats, typos included. "Excerpt" means
 
 **How the results were checked:** the README and the Design Handoff Document were checked against the code in this repository, and the repository was opened in a private browser window to confirm that it is public.
 
----
-
-## Reflection
-
-_(2 to 4 sentences in your own words: how AI helped, what you had to fix yourself, and what you learned.)_

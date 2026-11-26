@@ -5,8 +5,7 @@ Web-based inventory and logistics system built with PHP 8, MySQL/MariaDB and Tai
 For PCS Computers, Naga City, with two warehouses: the main store at Yashano Mall, Naga City, and the Legazpi store.
 
 - **Repository:** https://github.com/jeropillos-web/inventorysystem
-- **Live demo:** _(add the deployed link)_
-- **Design Handoff Document:** `docs/` _(PDF)_
+- **Design Handoff Document:** submitted separately as a PDF
 - **AI prompts used:** [`PROMPTS.md`](PROMPTS.md)
 
 ## Modules
@@ -58,8 +57,7 @@ invtrack/
 ├── config/       Database, roles and permissions, stock helpers, shared UI helpers
 ├── assets/       PCS Computers logo and icon, theme colors, shared JavaScript
 ├── sql/          invtrack.sql: the complete database (19 tables + sample data)
-├── upgrade.php   Upgrades an older INVTrack database without losing data
-└── docs/         Design Handoff Document
+└── upgrade.php   Upgrades an older INVTrack database without losing data
 ```
 
 ## Changes after the capstone defense
