@@ -1,9 +1,10 @@
 {
-  "name": "INVTrack Driver",
-  "short_name": "Driver",
+  "name": "INVTrack Delivery",
+  "short_name": "Delivery",
   "start_url": "app.php",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#f1f5f9",
-  "theme_color": "#0f172a"
+  "background_color": "#f2f5f3",
+  "theme_color": "#1b3429",
+  "icons": [{ "src": "../assets/pcs-icon.png", "sizes": "192x192", "type": "image/png" }]
 }

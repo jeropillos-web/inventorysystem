@@ -4,48 +4,53 @@ require_once __DIR__ . '/_boot.php';
 header('Content-Type: application/json');
 header('Cache-Control: no-store');
 
-function ok($data = null): void { echo json_encode(['ok' => true, 'data' => $data]); exit; }
-function fail(string $msg, int $code = 400): void { http_response_code($code); echo json_encode(['ok' => false, 'error' => $msg]); exit; }
+function ok($data = null) { echo json_encode(['ok' => true, 'data' => $data]); exit; }
+function fail(string $msg, int $code = 400) { http_response_code($code); echo json_encode(['ok' => false, 'error' => $msg]); exit; }
 
 set_exception_handler(function (Throwable $e) {
+    try { $pdo = db(); if ($pdo->inTransaction()) $pdo->rollBack(); } catch (Throwable $ignored) {}
     $msg = $e->getMessage();
-    if (str_contains($msg, 'Unknown column') || str_contains($msg, "doesn't exist")) {
-        $msg = 'The database is out of date. Re-import sql/invtrack.sql in phpMyAdmin. (' . $msg . ')';
+    if (str_contains($msg, 'Unknown column') || str_contains($msg, "doesn't exist") || str_contains($msg, 'no such')) {
+        $msg = 'The database is out of date. Open upgrade.php on the server computer. (' . $msg . ')';
     }
     fail($msg, 500);
 });
 
+if (!db_available()) fail('The database is offline.', 503);
 $user = driver_user();
 if (!$user) fail('Please sign in again.', 401);
-if (!db_available()) fail('The database is offline.', 503);
 
 $uid    = (int)$user['id'];
 $pdo    = db();
 $action = $_GET['action'] ?? '';
 
+const UPDATE_TYPES = ['In Transit', 'Arrived at checkpoint', 'Delayed', 'Note'];
+
 const JOB_FIELDS = "
     CASE WHEN d.shipment_id IS NULL THEN 'order' ELSE 'shipment' END AS kind,
     COALESCE(d.shop_order_id, d.shipment_id)  AS job_id,
     COALESCE(o.shop, s.destination)           AS title,
-    COALESCE(o.items, CONCAT(s.items, ' items', IF(s.weight <> '', CONCAT(' · ', s.weight), ''))) AS items,
+    COALESCE(o.items, CONCAT(s.items, ' items', CASE WHEN s.weight <> '' THEN CONCAT(' · ', s.weight) ELSE '' END)) AS items,
     COALESCE(o.units, s.items)                AS units,
     COALESCE(NULLIF(o.address, ''), s.destination, '') AS address,
-    COALESCE(o.dest_lat, s.dest_lat)          AS dest_lat,
-    COALESCE(o.dest_lng, s.dest_lng)          AS dest_lng";
+    COALESCE(s.origin, '')                    AS origin";
 const JOB_JOINS = "
     FROM deliveries d
     LEFT JOIN shop_orders o ON o.id = d.shop_order_id
     LEFT JOIN shipments   s ON s.id = d.shipment_id";
 
+function ref_type(string $kind): string { return $kind === 'shipment' ? 'shipment' : 'shop_order'; }
+
 function active_delivery(PDO $pdo, int $uid): ?array {
     $st = $pdo->prepare("SELECT d.id, d.vehicle_id, d.status, d.accepted_at, d.started_at, " . JOB_FIELDS . JOB_JOINS . "
                          WHERE d.driver_user_id = ? AND d.status IN ('Accepted','In Transit') LIMIT 1");
     $st->execute([$uid]);
-    return $st->fetch() ?: null;
-}
-
-function free_vehicle(PDO $pdo, string $vehicleId): void {
-    $pdo->prepare("UPDATE vehicles SET route_label = 'Idle', dest_lat = NULL, dest_lng = NULL WHERE id = ?")->execute([$vehicleId]);
+    $d = $st->fetch();
+    if (!$d) return null;
+    $logs = $pdo->prepare('SELECT status, location, remarks, logged_at FROM tracking_logs WHERE ref_type = ? AND ref_id = ? ORDER BY logged_at DESC, id DESC LIMIT 20');
+    $logs->execute([ref_type($d['kind']), $d['job_id']]);
+    $d['logs'] = $logs->fetchAll();
+    return $d;
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
@@ -53,20 +58,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
     $available = $pdo->query(
         "SELECT 'order' AS kind, o.id AS job_id, o.shop AS title, o.items, o.units, o.address,
-                o.dest_lat, o.dest_lng, o.requested_at AS ready_at, NULL AS due
+                o.requested_at AS ready_at, NULL AS due
          FROM shop_orders o LEFT JOIN deliveries d ON d.shop_order_id = o.id
          WHERE o.status = 'Ready for Delivery' AND d.id IS NULL
          UNION ALL
          SELECT 'shipment', s.id, s.destination,
-                CONCAT(s.items, ' items', IF(s.weight <> '', CONCAT(' · ', s.weight), ''), ' from ', s.origin),
-                s.items, s.destination, s.dest_lat, s.dest_lng, s.approved_at, s.eta
+                CONCAT(s.items, ' items', CASE WHEN s.weight <> '' THEN CONCAT(' · ', s.weight) ELSE '' END, ' from ', s.origin),
+                s.items, s.destination, s.approved_at, s.eta
          FROM shipments s LEFT JOIN deliveries d ON d.shipment_id = s.id
          WHERE s.status = 'Approved' AND d.id IS NULL
          ORDER BY ready_at ASC"
     )->fetchAll();
 
     $vs = $pdo->prepare(
-        "SELECT v.id, v.plate FROM vehicles v
+        "SELECT v.id, v.plate, v.type FROM vehicles v
          WHERE v.active = 1 AND v.id NOT IN (
            SELECT vehicle_id FROM deliveries WHERE status IN ('Accepted','In Transit') AND driver_user_id <> ?
          ) ORDER BY v.id"
@@ -100,7 +105,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') fail('Method not allowed', 405);
-$in = json_decode(file_get_contents('php://input'), true) ?? [];
+$in = json_decode(file_get_contents('php://input') ?: '', true);
+if (!is_array($in)) $in = [];
 
 switch ($action) {
 
@@ -114,10 +120,10 @@ switch ($action) {
         $pdo->beginTransaction();
         try {
             if ($kind === 'order') {
-                $st = $pdo->prepare("SELECT shop AS title, dest_lat, dest_lng, status FROM shop_orders WHERE id = ? FOR UPDATE");
+                $st = $pdo->prepare("SELECT shop AS title, status FROM shop_orders WHERE id = ? FOR UPDATE");
                 $readyStatus = 'Ready for Delivery';
             } else {
-                $st = $pdo->prepare("SELECT destination AS title, dest_lat, dest_lng, status FROM shipments WHERE id = ? FOR UPDATE");
+                $st = $pdo->prepare("SELECT destination AS title, origin, status FROM shipments WHERE id = ? FOR UPDATE");
                 $readyStatus = 'Approved';
             }
             $st->execute([$jobId]);
@@ -139,12 +145,14 @@ switch ($action) {
 
             if ($kind === 'order') {
                 $pdo->prepare("UPDATE shop_orders SET status = 'Out for Delivery' WHERE id = ?")->execute([$jobId]);
+                $from = ($m = main_warehouse_id($pdo)) ? warehouse_name($pdo, $m) : 'Warehouse';
             } else {
                 $pdo->prepare("UPDATE shipments SET status = 'In Transit', carrier = ? WHERE id = ?")
                     ->execute([mb_substr($user['name'] . ' · ' . $vehicleId, 0, 80), $jobId]);
+                $from = $job['origin'];
             }
-            $pdo->prepare("UPDATE vehicles SET driver_name = ?, route_label = ?, dest_lat = ?, dest_lng = ? WHERE id = ?")
-                ->execute([$user['name'], mb_substr($jobId . ' → ' . $job['title'], 0, 200), $job['dest_lat'], $job['dest_lng'], $vehicleId]);
+            track_log($pdo, ref_type($kind), $jobId, 'Out for Delivery', $from,
+                      'Accepted by ' . $user['name'] . ' (vehicle ' . $vehicleId . ')', $uid);
             $pdo->commit();
         } catch (PDOException $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
@@ -153,19 +161,19 @@ switch ($action) {
         }
         ok(active_delivery($pdo, $uid));
 
-    case 'start':
+    case 'update':
         $d = active_delivery($pdo, $uid);
-        if (!$d || $d['status'] !== 'Accepted') fail('No accepted delivery to start.', 409);
-        $pdo->beginTransaction();
-        $pdo->prepare("UPDATE deliveries SET status = 'In Transit', started_at = NOW() WHERE id = ?")->execute([$d['id']]);
-        if ($d['kind'] === 'shipment') {
-            $pdo->prepare("UPDATE shipments SET status = 'In Transit' WHERE id = ?")->execute([$d['job_id']]);
-        }
-        $pdo->commit();
+        if (!$d) fail('You have no active delivery.', 409);
+        $type     = in_array($in['status'] ?? '', UPDATE_TYPES, true) ? $in['status'] : null;
+        $location = mb_substr(trim((string)($in['location'] ?? '')), 0, 150);
+        $remarks  = mb_substr(trim((string)($in['remarks'] ?? '')), 0, 255);
+        if (!$type) fail('Choose the type of update.');
+        if ($location === '' && $remarks === '') fail('Enter where you are or a short remark.');
+        track_log($pdo, ref_type($d['kind']), $d['job_id'], $type, $location, $remarks, $uid);
         ok(active_delivery($pdo, $uid));
 
-    case 'cancel':    
-    case 'release':   
+    case 'cancel':
+    case 'release':
         $reason = trim((string)($in['reason'] ?? ''));
         if ($reason === '') fail('Choose a reason for cancelling.');
         $d = active_delivery($pdo, $uid);
@@ -180,28 +188,28 @@ switch ($action) {
         } else {
             $pdo->prepare("UPDATE shipments SET status = 'Approved', carrier = 'In-house' WHERE id = ?")->execute([$d['job_id']]);
         }
-        free_vehicle($pdo, $d['vehicle_id']);
+        track_log($pdo, ref_type($d['kind']), $d['job_id'], 'Delivery cancelled', '',
+                  'Cancelled by ' . $user['name'] . ': ' . $reason . '. Back in the queue for another driver.', $uid);
         $pdo->commit();
         ok();
 
     case 'deliver':
-        $recipient = trim((string)($in['recipient'] ?? ''));
-        $notes     = trim((string)($in['notes'] ?? ''));
+        $recipient = mb_substr(trim((string)($in['recipient'] ?? '')), 0, 100);
+        $notes     = mb_substr(trim((string)($in['notes'] ?? '')), 0, 255);
         if ($recipient === '') fail('Enter the name of the person who received the items.');
         $d = active_delivery($pdo, $uid);
         if (!$d) fail('You have no active delivery.', 409);
-        if ($d['status'] === 'Accepted') {   
-            $pdo->prepare("UPDATE deliveries SET status = 'In Transit', started_at = NOW() WHERE id = ?")->execute([$d['id']]);
-        }
         $pdo->beginTransaction();
-        $pdo->prepare("UPDATE deliveries SET status = 'Delivered', delivered_at = NOW(), recipient_name = ?, notes = ? WHERE id = ?")
-            ->execute([mb_substr($recipient, 0, 100), mb_substr($notes, 0, 255), $d['id']]);
+        $pdo->prepare("UPDATE deliveries SET status = 'Delivered', started_at = COALESCE(started_at, NOW()), delivered_at = NOW(),
+                       recipient_name = ?, notes = ? WHERE id = ?")
+            ->execute([$recipient, $notes, $d['id']]);
         if ($d['kind'] === 'order') {
             $pdo->prepare("UPDATE shop_orders SET status = 'Completed' WHERE id = ?")->execute([$d['job_id']]);
         } else {
             $pdo->prepare("UPDATE shipments SET status = 'Delivered' WHERE id = ?")->execute([$d['job_id']]);
         }
-        free_vehicle($pdo, $d['vehicle_id']);
+        track_log($pdo, ref_type($d['kind']), $d['job_id'], 'Delivered', $d['address'],
+                  'Received by ' . $recipient . ($notes !== '' ? '. ' . $notes : ''), $uid);
         $pdo->commit();
         ok();
 

@@ -1,6 +1,6 @@
 :root {
-  --bg: #f1f5f9; --card: #fff; --ink: #0f172a; --muted: #64748b; --line: #e2e8f0;
-  --brand: #0f172a; --accent: #f59e0b; --go: #059669; --stop: #dc2626; --blue: #2563eb;
+  --bg: #f2f5f3; --card: #fff; --ink: #0f172a; --muted: #64748b; --line: #e2e8f0;
+  --brand: #1b3429; --accent: #52b16a; --go: #059669; --stop: #dc2626; --blue: #2563eb;
   --radius: 16px;
 }
 * { box-sizing: border-box; }
@@ -17,10 +17,10 @@ body.login { min-height: 100dvh; display: grid; place-items: center; padding: 24
 .login-card h1 { font-size: 22px; margin: 20px 0 12px; }
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand small { display: block; color: var(--muted); font-size: 13px; }
-.logo { width: 40px; height: 40px; border-radius: 12px; background: var(--accent); color: var(--brand); display: grid; place-items: center; font-weight: 800; }
+.logo { width: 40px; height: 40px; border-radius: 10px; background: var(--brand); display: block; object-fit: cover; flex: none; }
 label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
 input, select, textarea { width: 100%; padding: 13px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; font-weight: 400; }
-input:focus-visible, select:focus-visible, textarea:focus-visible, .btn:focus-visible, .tab:focus-visible { outline: 3px solid #93c5fd; outline-offset: 2px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible, .btn:focus-visible, .tab:focus-visible { outline: 3px solid #80c991; outline-offset: 2px; }
 .alert { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; border-radius: 12px; padding: 10px 12px; font-size: 14px; margin: 0 0 12px; }
 .note  { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; border-radius: 12px; padding: 10px 12px; font-size: 14px; }
 
@@ -43,9 +43,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, .btn:focus-vi
 .top .who strong { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .top .who span { font-size: 12px; color: #cbd5e1; }
 .top a { color: #cbd5e1; font-size: 14px; text-decoration: none; }
-.gps-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 10px; border-radius: 999px; background: #1e293b; color: #cbd5e1; }
-.gps-pill i { width: 8px; height: 8px; border-radius: 50%; background: #64748b; }
-.gps-pill.on i { background: #34d399; box-shadow: 0 0 0 3px rgba(52,211,153,.25); }
 
 main.app { max-width: 560px; margin: 0 auto; padding: 16px 16px calc(env(safe-area-inset-bottom) + 96px); display: flex; flex-direction: column; gap: 14px; }
 h2 { font-size: 18px; margin: 6px 0 0; }
@@ -62,11 +59,6 @@ h2 { font-size: 18px; margin: 6px 0 0; }
 
 /* Active delivery */
 .active { border: 2px solid var(--brand); }
-#mini-map { height: 220px; border-radius: 12px; margin: 12px 0; position: relative; z-index: 0; background: #e2e8f0; }
-.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0 12px; }
-.stats div { background: var(--bg); border-radius: 10px; padding: 8px; text-align: center; }
-.stats b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
-.stats span { font-size: 11px; color: var(--muted); }
 
 /* Bottom tabs */
 .tabs { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; background: #fff; border-top: 1px solid var(--line);
@@ -85,3 +77,8 @@ dialog h3 { margin: 0 0 4px; }
          background: var(--brand); color: #fff; padding: 12px 14px; border-radius: 12px; font-size: 14px; opacity: 0; transform: translateY(10px); transition: .2s; pointer-events: none; }
 .toast.show { opacity: 1; transform: none; }
 .toast.err { background: var(--stop); }
+.log-title { margin: 18px 0 8px; font-size: 14px; }
+.log { list-style: none; margin: 0; padding: 0 0 0 16px; border-left: 2px solid #e2e8f0; }
+.log li { position: relative; padding: 0 0 12px 10px; }
+.log li::before { content: ''; position: absolute; left: -23px; top: 4px; width: 10px; height: 10px; border-radius: 50%; background: #cbd5e1; }
+.log li.now::before { background: #257d3d; box-shadow: 0 0 0 3px rgba(37,125,61,.2); }

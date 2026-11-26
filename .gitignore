@@ -1,15 +1,7 @@
-# Local / server-only secrets
+# Database password for the hosted copy (see config/db.php)
 config/db.local.php
-config/maps.local.php
-config/mapbox.php
-.env
-
-# OS and editor files
+# Editor and OS files
 .DS_Store
 Thumbs.db
-desktop.ini
 .vscode/
 .idea/
-
-# Logs
-*.log

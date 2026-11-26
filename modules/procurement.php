@@ -3,7 +3,8 @@ require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../config/fallback.php';
 
 $user     = $_SESSION['user'];
-$readonly = $user['role'] === 'warehouse';
+$readonly  = !role_can($user['role'], 'write');
+$canDelete = role_can($user['role'], 'delete');
 $offline  = !db_available();
 $search   = trim($_GET['po_q'] ?? '');
 
@@ -50,10 +51,13 @@ function poStatusBadge(string $s): string {
       <p class="text-sm text-slate-500 mt-0.5">Manage vendors, purchase orders, and procurement pipeline</p>
     </div>
     <?php if (!$readonly && !$offline): ?>
+    <div class="flex gap-2">
+    <button type="button" onclick="openModal('modal-add-sup')" class="<?= BTN_GHOST ?>">+ Add Supplier</button>
     <button onclick="document.getElementById('modal-add-po').classList.remove('hidden')"
       class="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-500 transition shadow-lg shadow-indigo-500/30">
       + Create PO
     </button>
+    </div>
     <?php endif; ?>
   </div>
 
@@ -143,7 +147,7 @@ function poStatusBadge(string $s): string {
             <?php foreach (['PO Number','Supplier','Items','Value (₱)','Order Date','Delivery Date','Status'] as $h): ?>
             <th class="text-left text-xs font-bold text-slate-400 px-5 py-3 uppercase tracking-wider whitespace-nowrap"><?= $h ?></th>
             <?php endforeach; ?>
-            <?php if (!$readonly && !$offline): ?><th class="px-5 py-3"></th><?php endif; ?>
+            <?php if ($canDelete && !$offline): ?><th class="px-5 py-3"></th><?php endif; ?>
           </tr>
         </thead>
         <tbody>
@@ -158,8 +162,14 @@ function poStatusBadge(string $s): string {
             <td class="px-5 py-3 font-mono font-semibold text-slate-900">₱<?= number_format($po['value'],2) ?></td>
             <td class="px-5 py-3 text-slate-600"><?= htmlspecialchars($po['order_date']) ?></td>
             <td class="px-5 py-3 text-slate-600"><?= htmlspecialchars($po['delivery_date']) ?></td>
-            <td class="px-5 py-3"><?= poStatusBadge($po['status']) ?></td>
-            <?php if (!$readonly && !$offline): ?>
+            <td class="px-5 py-3">
+              <?php if (!$readonly && !$offline): ?>
+              <select onchange="act('api/purchase_orders.php?id=<?= h(rawurlencode($po['id'])) ?>', 'PUT', {status: this.value})" class="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white" title="Change status">
+                <?php foreach (['Pending', 'In Review', 'Confirmed', 'Delivered', 'Cancelled'] as $st): ?><option <?= $po['status'] === $st ? 'selected' : '' ?>><?= $st ?></option><?php endforeach; ?>
+              </select>
+              <?php else: ?><?= poStatusBadge($po['status']) ?><?php endif; ?>
+            </td>
+            <?php if ($canDelete && !$offline): ?>
             <td class="px-5 py-3">
               <button onclick="deletePO('<?= htmlspecialchars($po['id']) ?>')"
                 class="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition">
@@ -177,7 +187,7 @@ function poStatusBadge(string $s): string {
 </div>
 
 <?php if (!$readonly && !$offline): ?>
-<div id="modal-add-po" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+<div id="modal-add-po" data-modal class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
   <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg" onclick="event.stopPropagation()">
     <div class="flex items-center justify-between px-6 py-5 border-b border-slate-200">
       <h2 class="font-bold text-slate-900">Create Purchase Order</h2>
@@ -199,7 +209,7 @@ function poStatusBadge(string $s): string {
           <input name="delivery_date" type="date" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" /></div>
         <div class="col-span-2"><label class="block text-xs font-semibold text-slate-600 mb-1">Status</label>
           <select name="status" class="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300">
-            <option>Pending</option><option>In Review</option><option>Confirmed</option><option>Delivered</option>
+            <option>Pending</option><option>In Review</option><option>Confirmed</option>
           </select></div>
       </div>
       <p id="po-form-error" class="text-xs text-red-600 hidden"></p>
@@ -216,14 +226,32 @@ document.getElementById('form-add-po').addEventListener('submit', async function
   e.preventDefault();
   const fd = new FormData(this); const body = Object.fromEntries(fd.entries());
   body.items = parseInt(body.items); body.value = parseFloat(body.value);
-  const res = await fetch('api/purchase_orders.php',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const json = await res.json();
-  if (json.ok) { location.reload(); }
-  else { const el=document.getElementById('po-form-error'); el.textContent=json.error; el.classList.remove('hidden'); }
+  try { await api('api/purchase_orders.php', 'POST', body); location.reload(); }
+  catch (ex) { const el=document.getElementById('po-form-error'); el.textContent=ex.message; el.classList.remove('hidden'); }
 });
 function deletePO(id) {
-  if (!confirm('Delete this purchase order?')) return;
-  fetch('api/purchase_orders.php?id='+encodeURIComponent(id),{method:'DELETE'}).then(()=>location.reload());
+  act('api/purchase_orders.php?id=' + encodeURIComponent(id), 'DELETE', null, 'Delete this purchase order?');
 }
 </script>
+<?php endif; ?>
+
+<?php if (!$readonly && !$offline): ?>
+<?php modal_open('modal-add-sup', 'Add Supplier'); ?>
+  <form id="form-add-sup" class="px-6 py-5 flex flex-col gap-4">
+    <div class="grid grid-cols-2 gap-4">
+      <div class="col-span-2"><label class="<?= LABEL ?>">Supplier name *</label><input name="name" required maxlength="100" class="<?= FIELD ?>"></div>
+      <div><label class="<?= LABEL ?>">Country</label><input name="country" maxlength="60" value="Philippines" class="<?= FIELD ?>"></div>
+      <div><label class="<?= LABEL ?>">Main category</label><input name="category" maxlength="60" placeholder="e.g. Laptops" class="<?= FIELD ?>"></div>
+      <div><label class="<?= LABEL ?>">Rating (0–5)</label><input name="rating" type="number" min="0" max="5" step="0.1" value="0" class="<?= FIELD ?>"></div>
+      <div><label class="<?= LABEL ?>">On-time delivery (%)</label><input name="on_time" type="number" min="0" max="100" value="0" class="<?= FIELD ?>"></div>
+      <div class="col-span-2"><label class="<?= LABEL ?>">Status</label><select name="status" class="<?= FIELD ?>"><option>Active</option><option>Under Review</option><option>Inactive</option></select></div>
+    </div>
+    <p data-error class="hidden text-xs text-red-600"></p>
+    <div class="flex gap-3 pt-1">
+      <button type="button" onclick="closeModal('modal-add-sup')" class="flex-1 <?= BTN_GHOST ?>">Cancel</button>
+      <button type="submit" class="flex-1 <?= BTN_PRIMARY ?>">Add Supplier</button>
+    </div>
+  </form>
+<?php modal_close(); ?>
+<script>bindForm('form-add-sup', 'api/suppliers.php');</script>
 <?php endif; ?>

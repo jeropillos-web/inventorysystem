@@ -1,16 +1,16 @@
 <?php
-require_once __DIR__ . '/../config/db.php';
 require_once __DIR__ . '/../config/fallback.php';
 
 $user = $_SESSION['user'];
-// Everyone can see shop orders and who is delivering them;
-// only warehouse personnel can move an order to Picking / Ready for Delivery.
-$canProcess = $user['role'] === 'warehouse';
+// Everyone with access can see shop orders and who is delivering them;
+// only warehouse personnel move an order to Picking / Ready for Delivery.
+$canProcess = role_can($user['role'], 'process_orders');
+$canCreate  = role_can($user['role'], 'write');
 
 $offline = !db_available();
 $notice = '';
 $error = '';
-// Warehouse staff move orders up to Ready for Delivery; drivers take it from there in the driver app.
+// Warehouse staff move orders up to Ready for Delivery; drivers take it from there in the delivery app.
 $allowedStatuses = ['Picking', 'Ready for Delivery'];
 
 if ($canProcess && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['order_id'], $_POST['status'])) {
@@ -22,9 +22,19 @@ if ($canProcess && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['order_
         $error = 'Connect the database before processing orders.';
     } else {
         $from = $status === 'Picking' ? 'Pending' : 'Picking';
-        $stmt = db()->prepare('UPDATE shop_orders SET status = ? WHERE id = ? AND status = ?');
+        $pdo  = db();
+        $pdo->beginTransaction();
+        $stmt = $pdo->prepare('UPDATE shop_orders SET status = ? WHERE id = ? AND status = ?');
         $stmt->execute([$status, $orderId, $from]);
-        $notice = $stmt->rowCount() ? "$orderId updated to $status." : 'Order not found or already updated.';
+        if ($stmt->rowCount()) {
+            $main = main_warehouse_id($pdo);
+            track_log($pdo, 'shop_order', $orderId, $status, $main ? warehouse_name($pdo, $main) : 'Warehouse',
+                      $status === 'Picking' ? 'Items are being picked' : 'Packed and waiting for a driver', (int)$user['id']);
+            $notice = "$orderId updated to $status.";
+        } else {
+            $notice = 'Order not found or already updated.';
+        }
+        $pdo->commit();
     }
 }
 
@@ -78,6 +88,10 @@ $statusColors = [
     <h1 class="text-2xl font-bold text-slate-900">Shop Orders &amp; Shipments</h1>
     <p class="text-sm text-slate-500 mt-0.5">Approve shipments, then pick, prepare, and release orders for drivers</p>
   </div>
+  <?php if ($offline) offline_notice(); ?>
+  <?php if ($canCreate && !$offline): ?>
+  <div><button type="button" onclick="openModal('modal-order')" class="<?= BTN_PRIMARY ?>">+ Record Shop Order</button></div>
+  <?php endif; ?>
 
   <?php if (!$offline): ?>
   <section class="rounded-xl border-2 <?= $toApprove && $canProcess ? 'border-orange-300' : 'border-slate-200' ?> bg-white shadow-sm overflow-hidden">
@@ -166,8 +180,9 @@ $statusColors = [
           <div class="mb-2 flex flex-wrap items-center gap-3">
             <span class="font-mono text-sm font-bold text-indigo-600"><?= htmlspecialchars($order['id']) ?></span>
             <span class="rounded-full px-2.5 py-1 text-xs font-semibold <?= $statusColors[$order['status']] ?? 'bg-slate-100 text-slate-700' ?>"><?= htmlspecialchars($order['status']) ?></span>
+            <?php if (!$offline): ?><a href="?module=tracking&ref=<?= urlencode($order['id']) ?>" class="text-xs font-semibold text-slate-500 underline hover:text-indigo-600">Tracking log</a><?php endif; ?>
           </div>
-          <h2 class="font-semibold text-slate-900"><?= htmlspecialchars($order['shop']) ?></h2>
+          <h2 class="font-semibold text-slate-900"><?= htmlspecialchars($order['shop']) ?><?php if (!empty($order['address'])): ?> <span class="text-sm font-normal text-slate-500">· <?= htmlspecialchars($order['address']) ?></span><?php endif; ?></h2>
           <p class="mt-1 text-sm text-slate-600"><?= htmlspecialchars($order['items']) ?></p>
           <p class="mt-2 font-mono text-xs text-slate-400"><?= number_format((int)$order['units']) ?> units · Requested <?= htmlspecialchars(date('M d, Y g:i A', strtotime($order['requested_at']))) ?></p>
         </div>
@@ -196,18 +211,26 @@ $statusColors = [
 
 <?php if ($canProcess && !$offline): ?>
 <script>
-async function reviewShipment(id, action) {
-  let note = '';
-  if (action === 'reject') {
-    note = prompt('Reason for rejecting ' + id + ':');
-    if (note === null) return;
-    if (!note.trim()) { alert('Please give a reason.'); return; }
-  } else if (!confirm('Approve ' + id + '? It will be sent to the driver app.')) return;
-  const res  = await fetch('api/shipments.php?action=' + action + '&id=' + encodeURIComponent(id),
-                           { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note }) });
-  const json = await res.json();
-  if (!json.ok) alert(json.error);
-  location.reload();
+function reviewShipment(id, action) {
+  if (action === 'reject') return actWithReason('api/shipments.php?action=reject&id=' + encodeURIComponent(id), 'Reason for rejecting ' + id + ':');
+  return act('api/shipments.php?action=approve&id=' + encodeURIComponent(id), 'POST', {}, 'Approve ' + id + '? It will appear in the delivery app.');
 }
 </script>
+<?php endif; ?>
+
+<?php if ($canCreate && !$offline): ?>
+<?php modal_open('modal-order', 'Record a shop order', 'A shop\'s request for products. The warehouse picks and prepares it.'); ?>
+  <form id="form-order" class="px-6 py-5 flex flex-col gap-4">
+    <div><label class="<?= LABEL ?>">Shop *</label><input name="shop" required maxlength="120" placeholder="e.g. PCS Computers Main Store" class="<?= FIELD ?>"></div>
+    <div><label class="<?= LABEL ?>">Delivery address *</label><input name="address" required maxlength="200" placeholder="Street, barangay, city" class="<?= FIELD ?>"></div>
+    <div><label class="<?= LABEL ?>">Requested items *</label><textarea name="items" required rows="2" maxlength="500" placeholder="e.g. MacBook Air M3 x2, MX Master 3S x4" class="<?= FIELD ?>"></textarea></div>
+    <div><label class="<?= LABEL ?>">Total units *</label><input name="units" type="number" min="1" value="1" required class="<?= FIELD ?>"></div>
+    <p data-error class="hidden text-xs text-red-600"></p>
+    <div class="flex gap-3 pt-1">
+      <button type="button" onclick="closeModal('modal-order')" class="flex-1 <?= BTN_GHOST ?>">Cancel</button>
+      <button type="submit" class="flex-1 <?= BTN_PRIMARY ?>">Save Order</button>
+    </div>
+  </form>
+<?php modal_close(); ?>
+<script>bindForm('form-order', 'api/shop_orders.php');</script>
 <?php endif; ?>
